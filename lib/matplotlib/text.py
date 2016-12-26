@@ -355,7 +355,7 @@ class Text(Artist):
 
         baseline = 0
         for i, line in enumerate(lines):
-            clean_line, ismath = self.is_math_text(line)
+            clean_line, ismath = self.is_math_text(line, self.get_usetex())
             if clean_line:
                 w, h, d = renderer.get_text_width_height_descent(clean_line,
                                                         self._fontproperties,
@@ -781,7 +781,8 @@ class Text(Artist):
                 y = y + posy
                 if renderer.flipy():
                     y = canvash - y
-                clean_line, ismath = textobj.is_math_text(line)
+                clean_line, ismath = textobj.is_math_text(line,
+                                                          self.get_usetex())
 
                 if textobj.get_path_effects():
                     from matplotlib.patheffects import PathEffectRenderer
@@ -1211,7 +1212,7 @@ class Text(Artist):
         self.stale = True
 
     @staticmethod
-    def is_math_text(s):
+    def is_math_text(s, usetex=None):
         """
         Returns a cleaned string and a boolean flag.
         The flag indicates if the given string *s* contains any mathtext,
@@ -1221,7 +1222,9 @@ class Text(Artist):
         """
         # Did we find an even number of non-escaped dollar signs?
         # If so, treat is as math text.
-        if rcParams['text.usetex']:
+        if usetex is None:
+            usetex = rcParams['text.usetex']
+        if usetex:
             if s == ' ':
                 s = r'\ '
             return s, 'TeX'
@@ -1255,7 +1258,7 @@ class Text(Artist):
         `rcParams['text.usetex']`
         """
         if usetex is None:
-            self._usetex = None
+            self._usetex = rcParams['text.usetex']
         else:
             self._usetex = bool(usetex)
         self.stale = True
@@ -2257,13 +2260,8 @@ class Annotation(Text, _AnnotationBase):
                 xpos = ((l, 0), (xc, 0.5), (r, 1))
                 ypos = ((b, 0), (yc, 0.5), (t, 1))
 
-                dsu = [(abs(val[0] - x0), val) for val in xpos]
-                dsu.sort()
-                _, (x, relposx) = dsu[0]
-
-                dsu = [(abs(val[0] - y0), val) for val in ypos]
-                dsu.sort()
-                _, (y, relposy) = dsu[0]
+                _, (x, relposx) = min((abs(val[0] - x0), val) for val in xpos)
+                _, (y, relposy) = min((abs(val[0] - y0), val) for val in ypos)
 
                 self._arrow_relpos = (relposx, relposy)
 

@@ -174,6 +174,25 @@ def test_autoscale_tight():
     assert_allclose(ax.get_xlim(), (-0.15, 3.15))
     assert_allclose(ax.get_ylim(), (1.0, 4.0))
 
+
+@cleanup(style='default')
+def test_autoscale_log_shared():
+    # related to github #7587
+    # array starts at zero to trigger _minpos handling
+    x = np.arange(100, dtype=float)
+    fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
+    ax1.loglog(x, x)
+    ax2.semilogx(x, x)
+    ax1.autoscale(tight=True)
+    ax2.autoscale(tight=True)
+    plt.draw()
+    lims = (x[1], x[-1])
+    assert_allclose(ax1.get_xlim(), lims)
+    assert_allclose(ax1.get_ylim(), lims)
+    assert_allclose(ax2.get_xlim(), lims)
+    assert_allclose(ax2.get_ylim(), (x[0], x[-1]))
+
+
 @cleanup(style='default')
 def test_use_sticky_edges():
     fig, ax = plt.subplots()
@@ -2371,13 +2390,13 @@ def test_errorbar_limits():
     plt.errorbar(x, y, xerr=xerr, yerr=yerr, ls=ls, color='blue')
 
     # including upper limits
-    uplims = np.zeros(x.shape)
+    uplims = np.zeros_like(x)
     uplims[[1, 5, 9]] = True
     plt.errorbar(x, y+0.5, xerr=xerr, yerr=yerr, uplims=uplims, ls=ls,
                  color='green')
 
     # including lower limits
-    lolims = np.zeros(x.shape)
+    lolims = np.zeros_like(x)
     lolims[[2, 4, 8]] = True
     plt.errorbar(x, y+1.0, xerr=xerr, yerr=yerr, lolims=lolims, ls=ls,
                  color='red')
@@ -2388,12 +2407,12 @@ def test_errorbar_limits():
 
     # including xlower and xupper limits
     xerr = 0.2
-    yerr = np.zeros(x.shape) + 0.2
+    yerr = np.zeros_like(x) + 0.2
     yerr[[3, 6]] = 0.3
     xlolims = lolims
     xuplims = uplims
-    lolims = np.zeros(x.shape)
-    uplims = np.zeros(x.shape)
+    lolims = np.zeros_like(x)
+    uplims = np.zeros_like(x)
     lolims[[6]] = True
     uplims[[3]] = True
     plt.errorbar(x, y+2.1, marker='o', ms=8, xerr=xerr, yerr=yerr,
@@ -2774,7 +2793,7 @@ def test_empty_eventplot():
 def test_marker_styles():
     fig = plt.figure()
     ax = fig.add_subplot(111)
-    for y, marker in enumerate(sorted(matplotlib.markers.MarkerStyle.markers.keys(),
+    for y, marker in enumerate(sorted(matplotlib.markers.MarkerStyle.markers,
                                       key=lambda x: str(type(x))+str(x))):
         ax.plot((y % 2)*5 + np.arange(10)*10, np.ones(10)*10*y, linestyle='', marker=marker,
                 markersize=10+y/5, label=marker)
@@ -4836,3 +4855,19 @@ def test_color_length_mismatch():
     c_rgb = (0.5, 0.5, 0.5)
     ax.scatter(x, y, c=c_rgb)
     ax.scatter(x, y, c=[c_rgb] * N)
+
+
+@cleanup
+def test_scatter_color_masking():
+    x = np.array([1, 2, 3])
+    y = np.array([1, np.nan, 3])
+    colors = np.array(['k', 'w', 'k'])
+    linewidths = np.array([1, 2, 3])
+    s = plt.scatter(x, y, color=colors, linewidths=linewidths)
+
+    facecolors = s.get_facecolors()
+    linecolors = s.get_edgecolors()
+    linewidths = s.get_linewidths()
+    assert_array_equal(facecolors[1], np.array([0, 0, 0, 1]))
+    assert_array_equal(linecolors[1], np.array([0, 0, 0, 1]))
+    assert linewidths[1] == 3

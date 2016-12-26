@@ -495,8 +495,9 @@ cycle.
        return [ax.fill_between(th, np.sin((j / N) * np.pi + th), alpha=.5, **extra_kwargs)
                for j in range(N)]
 
-   demo(ax1, {}, '2.x')
-   demo(ax2, {'facecolor': 'C0'}, 'non-cycled')
+   demo(ax1, {'facecolor': 'C0'}, 'classic')
+   demo(ax2, {}, 'v2.0')
+
 
 If the facecolor is set via the ``facecolors`` or ``color`` keyword argument,
 then the color is not cycled.
@@ -588,14 +589,13 @@ The default value of the ``align`` kwarg for both
                        **bar_kwargs)
 
 
-   ax1.set_title('2.0')
+   ax1.set_title("classic")
+   ax2.set_title('v2.0')
 
-   ax2.set_title("classic alignment")
-
-   demo(ax1.bar, {})
-   demo(ax2.bar, {'align': 'edge'})
-   demo(ax3.barh, {})
-   demo(ax4.barh, {'align': 'edge'})
+   demo(ax1.bar, {'align': 'edge'})
+   demo(ax2.bar, {})
+   demo(ax3.barh, {'align': 'edge'})
+   demo(ax4.barh, {})
 
 
 To restore the previous behavior explicitly pass the keyword argument
@@ -976,6 +976,11 @@ or create a new `~matplotlib.ticker.MaxNLocator`::
   import matplotlib.ticker as mticker
   ax.set_major_locator(mticker.MaxNLocator(nbins=9, steps=[1, 2, 5, 10])
 
+The algorithm used by `~matplotlib.ticker.MaxNLocator` has been
+improved, and this may change the choice of tick locations in some
+cases.  This also affects `~matplotlib.ticker.AutoLocator`, which
+uses ``MaxNLocator`` internally.
+
 For a log-scaled axis the default locator is the
 `~matplotlib.ticker.LogLocator`.  Previously the maximum number
 of ticks was set to 15, and could not be changed. Now there is a
@@ -1049,6 +1054,15 @@ Z-order
   behavior of plotting ticks and grids above lines, set
   ``rcParams['axes.axisbelow'] = False``.
 
+
+``LogFormatter`` labeling of minor ticks
+========================================
+
+Minor ticks on a log axis are now labeled when the axis view limits
+span a range less than or equal to the interval between two major
+ticks.  See `~matplotlib.ticker.LogFormatter` for details. The
+minor tick labeling is turned off when using ``mpl.style.use('classic')``,
+but cannot be controlled independently via ``rcParams``.
 
 
 ``ScalarFormatter`` tick label formatting with offsets

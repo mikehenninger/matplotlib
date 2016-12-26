@@ -1923,7 +1923,7 @@ or tuple of floats
             dictionary of kwargs to be passed to errorbar method. *ecolor* and
             *capsize* may be specified here rather than as independent kwargs.
 
-        align : {'edge',  'center'}, optional
+        align : {'center', 'edge'}, optional
             If 'edge', aligns bars by their left edges (for vertical bars) and
             by their bottom edges (for horizontal bars). If 'center', interpret
             the `left` argument as the coordinates of the centers of the bars.
@@ -2129,9 +2129,9 @@ or tuple of floats
             r.update(kwargs)
             r.get_path()._interpolation_steps = 100
             if orientation == 'vertical':
-                r.sticky_edges.y.append(0)
+                r.sticky_edges.y.append(b)
             elif orientation == 'horizontal':
-                r.sticky_edges.x.append(0)
+                r.sticky_edges.x.append(l)
             self.add_patch(r)
             patches.append(r)
 
@@ -2162,7 +2162,7 @@ or tuple of floats
 
         if adjust_xlim:
             xmin, xmax = self.dataLim.intervalx
-            xmin = np.min(w for w in width if w > 0)
+            xmin = min(w for w in width if w > 0)
             if xerr is not None:
                 xmin = xmin - np.max(xerr)
             xmin = max(xmin * 0.9, 1e-100)
@@ -2170,7 +2170,7 @@ or tuple of floats
 
         if adjust_ylim:
             ymin, ymax = self.dataLim.intervaly
-            ymin = np.min(h for h in height if h > 0)
+            ymin = min(h for h in height if h > 0)
             if yerr is not None:
                 ymin = ymin - np.max(yerr)
             ymin = max(ymin * 0.9, 1e-100)
@@ -2571,11 +2571,11 @@ or tuple of floats
           labels.
         """
 
-        x = np.asarray(x).astype(np.float32)
+        x = np.array(x, np.float32)
 
-        sx = float(x.sum())
+        sx = x.sum()
         if sx > 1:
-            x = np.divide(x, sx)
+            x /= sx
 
         if labels is None:
             labels = [''] * len(x)
@@ -2605,20 +2605,18 @@ or tuple of floats
         # set default values in wedge_prop
         if wedgeprops is None:
             wedgeprops = {}
-        if 'clip_on' not in wedgeprops:
-            wedgeprops['clip_on'] = False
+        wedgeprops.setdefault('clip_on', False)
 
         if textprops is None:
             textprops = {}
-        if 'clip_on' not in textprops:
-            textprops['clip_on'] = False
+        textprops.setdefault('clip_on', False)
 
         texts = []
         slices = []
         autotexts = []
 
         i = 0
-        for frac, label, expl in cbook.safezip(x, labels, explode):
+        for frac, label, expl in zip(x, labels, explode):
             x, y = center
             theta2 = (theta1 + frac) if counterclock else (theta1 - frac)
             thetam = 2 * math.pi * 0.5 * (theta1 + theta2)
@@ -3995,8 +3993,11 @@ or tuple of floats
         else:
             colors = None  # use cmap, norm after collection is created
 
-        # c will be unchanged unless it is the same length as x:
-        x, y, s, c = cbook.delete_masked_points(x, y, s, c)
+        # Anything in maskargs will be unchanged unless it is the same length
+        # as x:
+        maskargs = x, y, s, c, colors, edgecolors, linewidths
+        x, y, s, c, colors, edgecolors, linewidths =\
+            cbook.delete_masked_points(*maskargs)
 
         scales = s   # Renamed for readability below.
 
@@ -5197,10 +5198,10 @@ or tuple of floats
 
         Nx = X.shape[-1]
         Ny = Y.shape[0]
-        if len(X.shape) != 2 or X.shape[0] == 1:
+        if X.ndim != 2 or X.shape[0] == 1:
             x = X.reshape(1, Nx)
             X = x.repeat(Ny, axis=0)
-        if len(Y.shape) != 2 or Y.shape[1] == 1:
+        if Y.ndim != 2 or Y.shape[1] == 1:
             y = Y.reshape(Ny, 1)
             Y = y.repeat(Nx, axis=1)
         if X.shape != Y.shape:

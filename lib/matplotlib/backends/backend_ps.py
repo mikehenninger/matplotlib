@@ -8,7 +8,7 @@ from __future__ import (absolute_import, division, print_function,
 import six
 from six.moves import StringIO
 
-import glob, math, os, shutil, sys, time
+import glob, math, os, shutil, sys, time, datetime
 def _fn_name(): return sys._getframe(1).f_code.co_name
 import io
 
@@ -170,23 +170,6 @@ def quote_ps_string(s):
     return s.decode('ascii')
 
 
-def seq_allequal(seq1, seq2):
-    """
-    seq1 and seq2 are either None or sequences or arrays
-    Return True if both are None or both are seqs with identical
-    elements
-    """
-    if seq1 is None:
-        return seq2 is None
-
-    if seq2 is None:
-        return False
-    #ok, neither are None:, assuming iterable
-
-    if len(seq1) != len(seq2): return False
-    return np.alltrue(np.equal(seq1, seq2))
-
-
 class RendererPS(RendererBase):
     """
     The renderer handles all the drawing primitives using a graphics
@@ -270,7 +253,7 @@ class RendererPS(RendererBase):
     def set_linedash(self, offset, seq, store=1):
         if self.linedash is not None:
             oldo, oldseq = self.linedash
-            if seq_allequal(seq, oldseq) and oldo == offset:
+            if np.array_equal(seq, oldseq) and oldo == offset:
                 return
 
         if seq is not None and len(seq):
@@ -958,8 +941,8 @@ class FigureCanvasPS(FigureCanvasBase):
         if papertype == 'auto':
             pass
         elif papertype not in papersize:
-            raise RuntimeError( '%s is not a valid papertype. Use one \
-                    of %s'% (papertype, ', '.join(six.iterkeys(papersize))))
+            raise RuntimeError('%s is not a valid papertype. Use one of %s' %
+                               (papertype, ', '.join(papersize)))
 
         orientation = kwargs.pop("orientation", "portrait").lower()
         if orientation == 'landscape': isLandscape = True
@@ -982,7 +965,7 @@ class FigureCanvasPS(FigureCanvasBase):
 
     def _print_figure(self, outfile, format, dpi=72, facecolor='w', edgecolor='w',
                       orientation='portrait', isLandscape=False, papertype=None,
-                      **kwargs):
+                      metadata=None, **kwargs):
         """
         Render the figure to hardcopy.  Set the figure patch face and
         edge colors.  This is useful because some of the GUIs have a
@@ -995,6 +978,9 @@ class FigureCanvasPS(FigureCanvasBase):
 
         If outfile is a file object, a stand-alone PostScript file is
         written into this file object.
+
+        metadata must be a dictionary. Currently, only the value for
+        the key 'Creator' is used.
         """
         isEPSF = format == 'eps'
         passed_in_file_object = False
@@ -1076,14 +1062,27 @@ class FigureCanvasPS(FigureCanvasBase):
         self.figure.set_facecolor(origfacecolor)
         self.figure.set_edgecolor(origedgecolor)
 
+        # check for custom metadata
+        if metadata is not None and 'Creator' in metadata:
+            creator_str = metadata['Creator']
+        else:
+            creator_str = "matplotlib version " + __version__ + \
+                ", http://matplotlib.org/"
         def print_figure_impl():
             # write the PostScript headers
             if isEPSF: print("%!PS-Adobe-3.0 EPSF-3.0", file=fh)
             else: print("%!PS-Adobe-3.0", file=fh)
             if title: print("%%Title: "+title, file=fh)
-            print(("%%Creator: matplotlib version "
-                         +__version__+", http://matplotlib.org/"), file=fh)
-            print("%%CreationDate: "+time.ctime(time.time()), file=fh)
+            print("%%Creator: " + creator_str, file=fh)
+            # get source date from SOURCE_DATE_EPOCH, if set
+            # See https://reproducible-builds.org/specs/source-date-epoch/
+            source_date_epoch = os.getenv("SOURCE_DATE_EPOCH")
+            if source_date_epoch:
+                source_date = datetime.datetime.utcfromtimestamp(
+                    int(source_date_epoch) ).strftime("%a %b %d %H:%M:%S %Y")
+            else:
+                source_date = time.ctime()
+            print("%%CreationDate: "+source_date, file=fh)
             print("%%Orientation: " + orientation, file=fh)
             if not isEPSF: print("%%DocumentPaperSizes: "+papertype, file=fh)
             print("%%%%BoundingBox: %d %d %d %d" % bbox, file=fh)
@@ -1198,12 +1197,15 @@ class FigureCanvasPS(FigureCanvasBase):
                 os.chmod(outfile, mode)
 
     def _print_figure_tex(self, outfile, format, dpi, facecolor, edgecolor,
-                          orientation, isLandscape, papertype,
+                          orientation, isLandscape, papertype, metadata=None,
                           **kwargs):
         """
         If text.usetex is True in rc, a temporary pair of tex/eps files
         are created to allow tex to manage the text layout via the PSFrags
         package. These files are processed to yield the final ps or eps file.
+
+        metadata must be a dictionary. Currently, only the value for
+        the key 'Creator' is used.
         """
         isEPSF = format == 'eps'
         if is_string_like(outfile):
@@ -1258,15 +1260,29 @@ class FigureCanvasPS(FigureCanvasBase):
         self.figure.set_facecolor(origfacecolor)
         self.figure.set_edgecolor(origedgecolor)
 
+        # check for custom metadata
+        if metadata is not None and 'Creator' in metadata:
+            creator_str = metadata['Creator']
+        else:
+            creator_str = "matplotlib version " + __version__ + \
+                ", http://matplotlib.org/"
+
         # write to a temp file, we'll move it to outfile when done
         fd, tmpfile = mkstemp()
         with io.open(fd, 'w', encoding='latin-1') as fh:
             # write the Encapsulated PostScript headers
             print("%!PS-Adobe-3.0 EPSF-3.0", file=fh)
             if title: print("%%Title: "+title, file=fh)
-            print(("%%Creator: matplotlib version "
-                         +__version__+", http://matplotlib.org/"), file=fh)
-            print("%%CreationDate: "+time.ctime(time.time()), file=fh)
+            print("%%Creator: " + creator_str, file=fh)
+            # get source date from SOURCE_DATE_EPOCH, if set
+            # See https://reproducible-builds.org/specs/source-date-epoch/
+            source_date_epoch = os.getenv("SOURCE_DATE_EPOCH")
+            if source_date_epoch:
+                source_date = datetime.datetime.utcfromtimestamp(
+                    int(source_date_epoch) ).strftime("%a %b %d %H:%M:%S %Y")
+            else:
+                source_date = time.ctime()
+            print("%%CreationDate: "+source_date, file=fh)
             print("%%%%BoundingBox: %d %d %d %d" % bbox, file=fh)
             print("%%EndComments", file=fh)
 
@@ -1652,55 +1668,48 @@ def pstoeps(tmpfile, bbox=None, rotated=False):
         bbox_info, rotate = None, None
 
     epsfile = tmpfile + '.eps'
-    with io.open(epsfile, 'wb') as epsh:
+    with io.open(epsfile, 'wb') as epsh, io.open(tmpfile, 'rb') as tmph:
         write = epsh.write
-        with io.open(tmpfile, 'rb') as tmph:
-            line = tmph.readline()
-            # Modify the header:
-            while line:
-                if line.startswith(b'%!PS'):
-                    write(b"%!PS-Adobe-3.0 EPSF-3.0\n")
-                    if bbox:
-                        write(bbox_info.encode('ascii') + b'\n')
-                elif line.startswith(b'%%EndComments'):
-                    write(line)
-                    write(b'%%BeginProlog\n')
-                    write(b'save\n')
-                    write(b'countdictstack\n')
-                    write(b'mark\n')
-                    write(b'newpath\n')
-                    write(b'/showpage {} def\n')
-                    write(b'/setpagedevice {pop} def\n')
-                    write(b'%%EndProlog\n')
-                    write(b'%%Page 1 1\n')
-                    if rotate:
-                        write(rotate.encode('ascii') + b'\n')
-                    break
-                elif bbox and (line.startswith(b'%%Bound') \
-                               or line.startswith(b'%%HiResBound') \
-                               or line.startswith(b'%%DocumentMedia') \
-                               or line.startswith(b'%%Pages')):
-                    pass
-                else:
-                    write(line)
-                line = tmph.readline()
-            # Now rewrite the rest of the file, and modify the trailer.
-            # This is done in a second loop such that the header of the embedded
-            # eps file is not modified.
-            line = tmph.readline()
-            while line:
-                if line.startswith(b'%%EOF'):
-                    write(b'cleartomark\n')
-                    write(b'countdictstack\n')
-                    write(b'exch sub { end } repeat\n')
-                    write(b'restore\n')
-                    write(b'showpage\n')
-                    write(b'%%EOF\n')
-                elif line.startswith(b'%%PageBoundingBox'):
-                    pass
-                else:
-                    write(line)
-                line = tmph.readline()
+        # Modify the header:
+        for line in tmph:
+            if line.startswith(b'%!PS'):
+                write(b"%!PS-Adobe-3.0 EPSF-3.0\n")
+                if bbox:
+                    write(bbox_info.encode('ascii') + b'\n')
+            elif line.startswith(b'%%EndComments'):
+                write(line)
+                write(b'%%BeginProlog\n'
+                      b'save\n'
+                      b'countdictstack\n'
+                      b'mark\n'
+                      b'newpath\n'
+                      b'/showpage {} def\n'
+                      b'/setpagedevice {pop} def\n'
+                      b'%%EndProlog\n'
+                      b'%%Page 1 1\n')
+                if rotate:
+                    write(rotate.encode('ascii') + b'\n')
+                break
+            elif bbox and line.startswith((b'%%Bound', b'%%HiResBound',
+                                           b'%%DocumentMedia', b'%%Pages')):
+                pass
+            else:
+                write(line)
+        # Now rewrite the rest of the file, and modify the trailer.
+        # This is done in a second loop such that the header of the embedded
+        # eps file is not modified.
+        for line in tmph:
+            if line.startswith(b'%%EOF'):
+                write(b'cleartomark\n'
+                      b'countdictstack\n'
+                      b'exch sub { end } repeat\n'
+                      b'restore\n'
+                      b'showpage\n'
+                      b'%%EOF\n')
+            elif line.startswith(b'%%PageBoundingBox'):
+                pass
+            else:
+                write(line)
 
     os.remove(tmpfile)
     shutil.move(epsfile, tmpfile)

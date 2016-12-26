@@ -16,7 +16,6 @@ import six
 from six.moves import map, xrange, zip, reduce
 
 import warnings
-from operator import itemgetter
 
 import matplotlib.axes as maxes
 from matplotlib.axes import Axes, rcParams
@@ -267,17 +266,17 @@ class Axes3D(Axes):
         renderer.get_axis_position = self.get_axis_position
 
         # Calculate projection of collections and zorder them
-        zlist = [(col.do_3d_projection(renderer), col) \
-                 for col in self.collections]
-        zlist.sort(key=itemgetter(0), reverse=True)
-        for i, (z, col) in enumerate(zlist):
+        for i, col in enumerate(
+                sorted(self.collections,
+                       key=lambda col: col.do_3d_projection(renderer),
+                       reverse=True)):
             col.zorder = i
 
         # Calculate projection of patches and zorder them
-        zlist = [(patch.do_3d_projection(renderer), patch) \
-                for patch in self.patches]
-        zlist.sort(key=itemgetter(0), reverse=True)
-        for i, (z, patch) in enumerate(zlist):
+        for i, patch in enumerate(
+                sorted(self.patches,
+                       key=lambda patch: patch.do_3d_projection(renderer),
+                       reverse=True)):
             patch.zorder = i
 
         if self._axis3don:
@@ -590,7 +589,7 @@ class Axes3D(Axes):
         if 'xmax' in kw:
             right = kw.pop('xmax')
         if kw:
-            raise ValueError("unrecognized kwargs: %s" % kw.keys())
+            raise ValueError("unrecognized kwargs: %s" % list(kw))
 
         if right is None and cbook.iterable(left):
             left, right = left
@@ -645,7 +644,7 @@ class Axes3D(Axes):
         if 'ymax' in kw:
             top = kw.pop('ymax')
         if kw:
-            raise ValueError("unrecognized kwargs: %s" % kw.keys())
+            raise ValueError("unrecognized kwargs: %s" % list(kw))
 
         if top is None and cbook.iterable(bottom):
             bottom, top = bottom
@@ -699,7 +698,7 @@ class Axes3D(Axes):
         if 'zmax' in kw:
             top = kw.pop('zmax')
         if kw:
-            raise ValueError("unrecognized kwargs: %s" % kw.keys())
+            raise ValueError("unrecognized kwargs: %s" % list(kw))
 
         if top is None and cbook.iterable(bottom):
             bottom, top = bottom
@@ -1118,16 +1117,10 @@ class Axes3D(Axes):
             return 'azimuth=%d deg, elevation=%d deg ' % (self.azim, self.elev)
             # ignore xd and yd and display angles instead
 
-        p = (xd, yd)
-        edges = self.tunit_edges()
-        #lines = [proj3d.line2d(p0,p1) for (p0,p1) in edges]
-        ldists = [(proj3d.line2d_seg_dist(p0, p1, p), i) for \
-                i, (p0, p1) in enumerate(edges)]
-        ldists.sort()
         # nearest edge
-        edgei = ldists[0][1]
-
-        p0, p1 = edges[edgei]
+        p0, p1 = min(self.tunit_edges(),
+                     key=lambda edge: proj3d.line2d_seg_dist(
+                         edge[0], edge[1], (xd, yd)))
 
         # scale the z value to match
         x0, y0, z0 = p0
@@ -1519,18 +1512,17 @@ class Axes3D(Axes):
 
         argsi = 0
         # First argument is array of zs
-        if len(args) > 0 and cbook.iterable(args[0]) and \
-                len(xs) == len(args[0]) :
+        if args and cbook.iterable(args[0]) and len(xs) == len(args[0]):
             # So, we know that it is an array with
             # first dimension the same as xs.
             # Next, check to see if the data contained
             # therein (if any) is scalar (and not another array).
-            if len(args[0]) == 0 or cbook.is_scalar(args[0][0]) :
+            if len(args[0]) == 0 or cbook.is_scalar(args[0][0]):
                 zs = args[argsi]
                 argsi += 1
 
         # First argument is z value
-        elif len(args) > 0 and cbook.is_scalar(args[0]):
+        elif args and cbook.is_scalar(args[0]):
             zs = args[argsi]
             argsi += 1
 
@@ -1557,15 +1549,28 @@ class Axes3D(Axes):
 
         The `rstride` and `cstride` kwargs set the stride used to
         sample the input data to generate the graph.  If 1k by 1k
-        arrays are passed in the default values for the strides will
-        result in a 100x100 grid being plotted.
+        arrays are passed in, the default values for the strides will
+        result in a 100x100 grid being plotted. Defaults to 10.
+        Raises a ValueError if both stride and count kwargs
+        (see next section) are provided.
+
+        The `rcount` and `ccount` kwargs supersedes `rstride` and
+        `cstride` for default sampling method for surface plotting.
+        These arguments will determine at most how many evenly spaced
+        samples will be taken from the input data to generate the graph.
+        This is the default sampling method unless using the 'classic'
+        style. Will raise ValueError if both stride and count are
+        specified.
+        Added in v2.0.0.
 
         ============= ================================================
         Argument      Description
         ============= ================================================
         *X*, *Y*, *Z* Data values as 2D arrays
-        *rstride*     Array row stride (step size), defaults to 10
-        *cstride*     Array column stride (step size), defaults to 10
+        *rstride*     Array row stride (step size)
+        *cstride*     Array column stride (step size)
+        *rcount*      Use at most this many rows, defaults to 50
+        *ccount*      Use at most this many columns, defaults to 50
         *color*       Color of the surface patches
         *cmap*        A colormap for the surface patches.
         *facecolors*  Face colors for the individual patches
@@ -1587,8 +1592,30 @@ class Axes3D(Axes):
         X, Y, Z = np.broadcast_arrays(X, Y, Z)
         rows, cols = Z.shape
 
+        has_stride = 'rstride' in kwargs or 'cstride' in kwargs
+        has_count = 'rcount' in kwargs or 'ccount' in kwargs
+
+        if has_stride and has_count:
+            raise ValueError("Cannot specify both stride and count arguments")
+
         rstride = kwargs.pop('rstride', 10)
         cstride = kwargs.pop('cstride', 10)
+        rcount = kwargs.pop('rcount', 50)
+        ccount = kwargs.pop('ccount', 50)
+
+        if rcParams['_internal.classic_mode']:
+            # Strides have priority over counts in classic mode.
+            # So, only compute strides from counts
+            # if counts were explicitly given
+            if has_count:
+                rstride = int(np.ceil(rows / rcount))
+                cstride = int(np.ceil(cols / ccount))
+        else:
+            # If the strides are provided then it has priority.
+            # Otherwise, compute the strides from the counts.
+            if not has_stride:
+                rstride = int(np.ceil(rows / rcount))
+                cstride = int(np.ceil(cols / ccount))
 
         if 'facecolors' in kwargs:
             fcolors = kwargs.pop('facecolors')
@@ -1738,7 +1765,21 @@ class Axes3D(Axes):
         The `rstride` and `cstride` kwargs set the stride used to
         sample the input data to generate the graph. If either is 0
         the input data in not sampled along this direction producing a
-        3D line plot rather than a wireframe plot.
+        3D line plot rather than a wireframe plot. The stride arguments
+        are only used by default if in the 'classic' mode. They are
+        now superseded by `rcount` and `ccount`. Will raise ValueError
+        if both stride and count are used.
+
+`       The `rcount` and `ccount` kwargs supersedes `rstride` and
+        `cstride` for default sampling method for wireframe plotting.
+        These arguments will determine at most how many evenly spaced
+        samples will be taken from the input data to generate the graph.
+        This is the default sampling method unless using the 'classic'
+        style. Will raise ValueError if both stride and count are
+        specified. If either is zero, then the input data is not sampled
+        along this direction, producing a 3D line plot rather than a
+        wireframe plot.
+        Added in v2.0.0.
 
         ==========  ================================================
         Argument    Description
@@ -1747,6 +1788,8 @@ class Axes3D(Axes):
         *Z*
         *rstride*   Array row stride (step size), defaults to 1
         *cstride*   Array column stride (step size), defaults to 1
+        *rcount*    Use at most this many rows, defaults to 50
+        *ccount*    Use at most this many columns, defaults to 50
         ==========  ================================================
 
         Keyword arguments are passed on to
@@ -1755,15 +1798,37 @@ class Axes3D(Axes):
         Returns a :class:`~mpl_toolkits.mplot3d.art3d.Line3DCollection`
         '''
 
-        rstride = kwargs.pop("rstride", 1)
-        cstride = kwargs.pop("cstride", 1)
-
         had_data = self.has_data()
         if Z.ndim != 2:
             raise ValueError("Argument Z must be 2-dimensional.")
         # FIXME: Support masked arrays
         X, Y, Z = np.broadcast_arrays(X, Y, Z)
         rows, cols = Z.shape
+
+        has_stride = 'rstride' in kwargs or 'cstride' in kwargs
+        has_count = 'rcount' in kwargs or 'ccount' in kwargs
+
+        if has_stride and has_count:
+            raise ValueError("Cannot specify both stride and count arguments")
+
+        rstride = kwargs.pop('rstride', 1)
+        cstride = kwargs.pop('cstride', 1)
+        rcount = kwargs.pop('rcount', 50)
+        ccount = kwargs.pop('ccount', 50)
+
+        if rcParams['_internal.classic_mode']:
+            # Strides have priority over counts in classic mode.
+            # So, only compute strides from counts
+            # if counts were explicitly given
+            if has_count:
+                rstride = int(np.ceil(rows / rcount)) if rcount else 0
+                cstride = int(np.ceil(cols / ccount)) if ccount else 0
+        else:
+            # If the strides are provided then it has priority.
+            # Otherwise, compute the strides from the counts.
+            if not has_stride:
+                rstride = int(np.ceil(rows / rcount)) if rcount else 0
+                cstride = int(np.ceil(cols / ccount)) if ccount else 0
 
         # We want two sets of lines, one running along the "rows" of
         # Z and another set of lines running along the "columns" of Z.

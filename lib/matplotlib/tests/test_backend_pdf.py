@@ -7,13 +7,23 @@ import six
 
 import io
 import os
+import tempfile
+
+try:
+    from unittest.mock import patch
+except ImportError:
+    from mock import patch
+from nose.tools import raises
 
 import numpy as np
-from matplotlib import cm, rcParams
+from matplotlib import checkdep_tex, cm, rcParams
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib import pyplot as plt
+from matplotlib.testing.determinism import (_determinism_source_date_epoch,
+                                            _determinism_check)
 from matplotlib.testing.decorators import (image_comparison, knownfailureif,
                                            cleanup)
+from matplotlib import dviread
 
 
 @image_comparison(baseline_images=['pdf_use14corefonts'],
@@ -36,6 +46,10 @@ and containing some French characters and the euro symbol:
             verticalalignment='bottom',
             fontsize=14)
     ax.axhline(0.5, linewidth=0.5)
+
+needs_tex = knownfailureif(
+    not checkdep_tex(),
+    "This test needs a TeX installation")
 
 
 @cleanup
@@ -98,8 +112,8 @@ def test_multipage_keep_empty():
 
 @cleanup
 def test_composite_image():
-    #Test that figures can be saved with and without combining multiple images
-    #(on a single set of axes) into a single composite image.
+    # Test that figures can be saved with and without combining multiple images
+    # (on a single set of axes) into a single composite image.
     X, Y = np.meshgrid(np.arange(-5, 5, 1), np.arange(-5, 5, 1))
     Z = np.sin(Y ** 2)
     fig = plt.figure()
@@ -110,11 +124,47 @@ def test_composite_image():
     plt.rcParams['image.composite_image'] = True
     with PdfPages(io.BytesIO()) as pdf:
         fig.savefig(pdf, format="pdf")
-        assert len(pdf._file._images.keys()) == 1
+        assert len(pdf._file._images) == 1
     plt.rcParams['image.composite_image'] = False
     with PdfPages(io.BytesIO()) as pdf:
         fig.savefig(pdf, format="pdf")
-        assert len(pdf._file._images.keys()) == 2
+        assert len(pdf._file._images) == 2
+
+
+@cleanup
+def test_source_date_epoch():
+    """Test SOURCE_DATE_EPOCH support for PDF output"""
+    _determinism_source_date_epoch("pdf", b"/CreationDate (D:20000101000000Z)")
+
+
+@cleanup
+def test_determinism_plain():
+    """Test for reproducible PDF output: simple figure"""
+    _determinism_check('', format="pdf")
+
+
+@cleanup
+def test_determinism_images():
+    """Test for reproducible PDF output: figure with different images"""
+    _determinism_check('i', format="pdf")
+
+
+@cleanup
+def test_determinism_hatches():
+    """Test for reproducible PDF output: figure with different hatches"""
+    _determinism_check('h', format="pdf")
+
+
+@cleanup
+def test_determinism_markers():
+    """Test for reproducible PDF output: figure with different markers"""
+    _determinism_check('m', format="pdf")
+
+
+@cleanup
+def test_determinism_all():
+    """Test for reproducible PDF output"""
+    _determinism_check(format="pdf")
 
 
 @image_comparison(baseline_images=['hatching_legend'],
@@ -140,3 +190,19 @@ def test_grayscale_alpha():
     ax.imshow(dd, interpolation='none', cmap='gray_r')
     ax.set_xticks([])
     ax.set_yticks([])
+
+
+@cleanup
+@needs_tex
+@raises(ValueError)
+@patch('matplotlib.dviread.PsfontsMap.__getitem__')
+def test_missing_psfont(mock):
+    """An error is raised if a TeX font lacks a Type-1 equivalent"""
+    psfont = dviread.PsFont(texname='texfont', psname='Some Font',
+                            effects=None, encoding=None, filename=None)
+    mock.configure_mock(return_value=psfont)
+    rcParams['text.usetex'] = True
+    fig, ax = plt.subplots()
+    ax.text(0.5, 0.5, 'hello')
+    with tempfile.TemporaryFile() as tmpfile:
+        fig.savefig(tmpfile, format='pdf')

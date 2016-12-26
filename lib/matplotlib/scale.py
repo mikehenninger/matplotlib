@@ -251,7 +251,7 @@ class LogScale(ScaleBase):
         axis.set_minor_locator(LogLocator(self.base, self.subs))
         axis.set_minor_formatter(
             LogFormatterSciNotation(self.base,
-                                    labelOnlyBase=self.subs))
+                                    labelOnlyBase=bool(self.subs)))
 
     def get_transform(self):
         """
@@ -264,6 +264,10 @@ class LogScale(ScaleBase):
         """
         Limit the domain to positive values.
         """
+        if not np.isfinite(minpos):
+            minpos = 1e-300  # This value should rarely if ever
+                             # end up with a visible effect.
+
         return (minpos if vmin <= 0 else vmin,
                 minpos if vmax <= 0 else vmax)
 
@@ -499,7 +503,10 @@ class LogitScale(ScaleBase):
         """
         Limit the domain to values between 0 and 1 (excluded).
         """
-        return (minpos if vmin <= 0 else minpos,
+        if not np.isfinite(minpos):
+            minpos = 1e-7    # This value should rarely if ever
+                             # end up with a visible effect.
+        return (minpos if vmin <= 0 else vmin,
                 1 - minpos if vmax >= 1 else vmax)
 
 
@@ -512,9 +519,7 @@ _scale_mapping = {
 
 
 def get_scale_names():
-    names = list(six.iterkeys(_scale_mapping))
-    names.sort()
-    return names
+    return sorted(_scale_mapping)
 
 
 def scale_factory(scale, axis, **kwargs):

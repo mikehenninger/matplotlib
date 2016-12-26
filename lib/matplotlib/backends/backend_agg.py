@@ -26,8 +26,9 @@ import six
 
 import threading
 import numpy as np
+from collections import OrderedDict
 from math import radians, cos, sin
-from matplotlib import verbose, rcParams
+from matplotlib import verbose, rcParams, __version__
 from matplotlib.backend_bases import (RendererBase, FigureManagerBase,
                                       FigureCanvasBase)
 from matplotlib.cbook import is_string_like, maxdict, restrict_dict
@@ -210,7 +211,7 @@ class RendererAgg(RendererBase):
 
         #print x, y, int(x), int(y), s
         self._renderer.draw_text_image(
-            font, round(x - xd + xo), round(y + yd + yo) + 1, angle, gc)
+            font, np.round(x - xd + xo), np.round(y + yd + yo) + 1, angle, gc)
 
     def get_text_width_height_descent(self, s, prop, ismath):
         """
@@ -257,8 +258,8 @@ class RendererAgg(RendererBase):
         w, h, d = self.get_text_width_height_descent(s, prop, ismath)
         xd = d * sin(radians(angle))
         yd = d * cos(radians(angle))
-        x = round(x + xd)
-        y = round(y + yd)
+        x = np.round(x + xd)
+        y = np.round(y + yd)
 
         self._renderer.draw_text_image(Z, x, y, angle, gc)
 
@@ -554,8 +555,16 @@ class FigureCanvasAgg(FigureCanvasBase):
         else:
             close = False
 
+        version_str = 'matplotlib version ' + __version__ + \
+            ', http://matplotlib.org/'
+        metadata = OrderedDict({'Software': version_str})
+        user_metadata = kwargs.pop("metadata", None)
+        if user_metadata is not None:
+            metadata.update(user_metadata)
+
         try:
-            _png.write_png(renderer._renderer, filename_or_obj, self.figure.dpi)
+            _png.write_png(renderer._renderer, filename_or_obj,
+                           self.figure.dpi, metadata=metadata)
         finally:
             if close:
                 filename_or_obj.close()

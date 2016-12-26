@@ -113,8 +113,8 @@ def get_file_hash(path, block_size=2 ** 20):
 def make_external_conversion_command(cmd):
     def convert(old, new):
         cmdline = cmd(old, new)
-        pipe = subprocess.Popen(
-            cmdline, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        pipe = subprocess.Popen(cmdline, universal_newlines=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, stderr = pipe.communicate()
         errcode = pipe.wait()
         if not os.path.exists(new) or errcode:
@@ -157,7 +157,7 @@ def comparable_formats():
     on this system.
 
     """
-    return ['png'] + list(six.iterkeys(converter))
+    return ['png'] + list(converter)
 
 
 def convert(filename, cache):
@@ -224,8 +224,8 @@ def verify(filename):
     verifier = verifiers.get(extension, None)
     if verifier is not None:
         cmd = verifier(filename)
-        pipe = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        pipe = subprocess.Popen(cmd, universal_newlines=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, stderr = pipe.communicate()
         errcode = pipe.wait()
         if errcode != 0:
@@ -254,7 +254,7 @@ def calculate_rms(expectedImage, actualImage):
         raise ImageComparisonFailure(
             "image sizes do not match expected size: {0} "
             "actual size {1}".format(expectedImage.shape, actualImage.shape))
-    num_values = np.prod(expectedImage.shape)
+    num_values = expectedImage.size
     abs_diff_image = abs(expectedImage - actualImage)
     histogram = np.bincount(abs_diff_image.ravel(), minlength=256)
     sum_of_squares = np.sum(histogram * np.arange(len(histogram)) ** 2)

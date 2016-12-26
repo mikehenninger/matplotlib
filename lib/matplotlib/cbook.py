@@ -50,36 +50,41 @@ mplDeprecation = MatplotlibDeprecationWarning
 
 def _generate_deprecation_message(since, message='', name='',
                                   alternative='', pending=False,
-                                  obj_type='attribute'):
+                                  obj_type='attribute',
+                                  addendum=''):
 
     if not message:
-        altmessage = ''
 
         if pending:
             message = (
-                'The %(func)s %(obj_type)s will be deprecated in a '
+                'The %(name)s %(obj_type)s will be deprecated in a '
                 'future version.')
         else:
             message = (
-                'The %(func)s %(obj_type)s was deprecated in version '
+                'The %(name)s %(obj_type)s was deprecated in version '
                 '%(since)s.')
-        if alternative:
-            altmessage = ' Use %s instead.' % alternative
 
-        message = ((message % {
-            'func': name,
-            'name': name,
-            'alternative': alternative,
-            'obj_type': obj_type,
-            'since': since}) +
-            altmessage)
+    altmessage = ''
+    if alternative:
+        altmessage = ' Use %s instead.' % alternative
+
+    message = ((message % {
+        'func': name,
+        'name': name,
+        'alternative': alternative,
+        'obj_type': obj_type,
+        'since': since}) +
+        altmessage)
+
+    if addendum:
+        message += addendum
 
     return message
 
 
 def warn_deprecated(
         since, message='', name='', alternative='', pending=False,
-        obj_type='attribute'):
+        obj_type='attribute', addendum=''):
     """
     Used to display deprecation warning in a standard way.
 
@@ -90,7 +95,7 @@ def warn_deprecated(
 
     message : str, optional
         Override the default deprecation message.  The format
-        specifier `%(func)s` may be used for the name of the function,
+        specifier `%(name)s` may be used for the name of the function,
         and `%(alternative)s` may be used in the deprecation message
         to insert the name of an alternative to the deprecated
         function.  `%(obj_type)s` may be used to insert a friendly name
@@ -111,6 +116,9 @@ def warn_deprecated(
     obj_type : str, optional
         The object type being deprecated.
 
+    addendum : str, optional
+        Additional text appended directly to the final message.
+
     Examples
     --------
 
@@ -122,15 +130,15 @@ def warn_deprecated(
 
     """
     message = _generate_deprecation_message(
-        since, message, name, alternative, pending, obj_type)
+                since, message, name, alternative, pending, obj_type)
 
     warnings.warn(message, mplDeprecation, stacklevel=1)
 
 
 def deprecated(since, message='', name='', alternative='', pending=False,
-               obj_type='function'):
+               obj_type=None, addendum=''):
     """
-    Decorator to mark a function as deprecated.
+    Decorator to mark a function or a class as deprecated.
 
     Parameters
     ----------
@@ -140,15 +148,15 @@ def deprecated(since, message='', name='', alternative='', pending=False,
 
     message : str, optional
         Override the default deprecation message.  The format
-        specifier `%(func)s` may be used for the name of the function,
+        specifier `%(name)s` may be used for the name of the object,
         and `%(alternative)s` may be used in the deprecation message
         to insert the name of an alternative to the deprecated
-        function.  `%(obj_type)s` may be used to insert a friendly name
+        object.  `%(obj_type)s` may be used to insert a friendly name
         for the type of object being deprecated.
 
     name : str, optional
-        The name of the deprecated function; if not provided the name
-        is automatically determined from the passed in function,
+        The name of the deprecated object; if not provided the name
+        is automatically determined from the passed in object,
         though this is useful in the case of renamed functions, where
         the new function is just assigned to the name of the
         deprecated function.  For example::
@@ -158,13 +166,16 @@ def deprecated(since, message='', name='', alternative='', pending=False,
             oldFunction = new_function
 
     alternative : str, optional
-        An alternative function that the user may use in place of the
-        deprecated function.  The deprecation warning will tell the user
+        An alternative object that the user may use in place of the
+        deprecated object.  The deprecation warning will tell the user
         about this alternative if provided.
 
     pending : bool, optional
         If True, uses a PendingDeprecationWarning instead of a
         DeprecationWarning.
+
+    addendum : str, optional
+        Additional text appended directly to the final message.
 
     Examples
     --------
@@ -176,33 +187,50 @@ def deprecated(since, message='', name='', alternative='', pending=False,
                 pass
 
     """
-    def deprecate(func, message=message, name=name, alternative=alternative,
-                  pending=pending):
-        import functools
+    def deprecate(obj, message=message, name=name, alternative=alternative,
+                  pending=pending, addendum=addendum):
         import textwrap
 
-        if isinstance(func, classmethod):
-            func = func.__func__
-            is_classmethod = True
-        else:
-            is_classmethod = False
-
         if not name:
-            name = func.__name__
+            name = obj.__name__
+
+        if isinstance(obj, type):
+            obj_type = "class"
+            old_doc = obj.__doc__
+            func = obj.__init__
+            def finalize(wrapper, new_doc):
+                try:
+                    obj.__doc__ = new_doc
+                except AttributeError:
+                    pass  # cls.__doc__ is not writeable on Py2.
+                obj.__init__ = wrapper
+                return obj
+        else:
+            obj_type = "function"
+            if isinstance(obj, classmethod):
+                func = obj.__func__
+                old_doc = func.__doc__
+                def finalize(wrapper, new_doc):
+                    wrapper = functools.wraps(func)(wrapper)
+                    wrapper.__doc__ = new_doc
+                    return classmethod(wrapper)
+            else:
+                func = obj
+                old_doc = func.__doc__
+                def finalize(wrapper, new_doc):
+                    wrapper = functools.wraps(func)(wrapper)
+                    wrapper.__doc__ = new_doc
+                    return wrapper
 
         message = _generate_deprecation_message(
-            since, message, name, alternative, pending, obj_type)
+                    since, message, name, alternative, pending,
+                    obj_type, addendum)
 
-        @functools.wraps(func)
-        def deprecated_func(*args, **kwargs):
+        def wrapper(*args, **kwargs):
             warnings.warn(message, mplDeprecation, stacklevel=2)
-
             return func(*args, **kwargs)
 
-        old_doc = deprecated_func.__doc__
-        if not old_doc:
-            old_doc = ''
-        old_doc = textwrap.dedent(old_doc).strip('\n')
+        old_doc = textwrap.dedent(old_doc or '').strip('\n')
         message = message.strip()
         new_doc = (('\n.. deprecated:: %(since)s'
                     '\n    %(message)s\n\n' %
@@ -212,11 +240,7 @@ def deprecated(since, message='', name='', alternative='', pending=False,
             # docutils when the original docstring was blank.
             new_doc += r'\ '
 
-        deprecated_func.__doc__ = new_doc
-
-        if is_classmethod:
-            deprecated_func = classmethod(deprecated_func)
-        return deprecated_func
+        return finalize(wrapper, new_doc)
 
     return deprecate
 
@@ -249,6 +273,7 @@ def unicode_safe(s):
     return s
 
 
+@deprecated('2.1')
 class converter(object):
     """
     Base class for handling string -> python type with support for
@@ -267,12 +292,14 @@ class converter(object):
         return not s.strip() or s == self.missing
 
 
+@deprecated('2.1')
 class tostr(converter):
     """convert to string or None"""
     def __init__(self, missing='Null', missingval=''):
         converter.__init__(self, missing=missing, missingval=missingval)
 
 
+@deprecated('2.1')
 class todatetime(converter):
     """convert to a datetime or None"""
     def __init__(self, fmt='%Y-%m-%d', missing='Null', missingval=None):
@@ -287,6 +314,7 @@ class todatetime(converter):
         return datetime.datetime(*tup[:6])
 
 
+@deprecated('2.1')
 class todate(converter):
     """convert to a date or None"""
     def __init__(self, fmt='%Y-%m-%d', missing='Null', missingval=None):
@@ -301,6 +329,7 @@ class todate(converter):
         return datetime.date(*tup[:3])
 
 
+@deprecated('2.1')
 class tofloat(converter):
     """convert to a float or None"""
     def __init__(self, missing='Null', missingval=None):
@@ -313,6 +342,7 @@ class tofloat(converter):
         return float(s)
 
 
+@deprecated('2.1')
 class toint(converter):
     """convert to an int or None"""
     def __init__(self, missing='Null', missingval=None):
@@ -650,12 +680,11 @@ class Bunch(object):
         self.__dict__.update(kwds)
 
     def __repr__(self):
-        keys = six.iterkeys(self.__dict__)
-        return 'Bunch(%s)' % ', '.join(['%s=%s' % (k, self.__dict__[k])
-                                        for k
-                                        in keys])
+        return 'Bunch(%s)' % ', '.join(
+            '%s=%s' % kv for kv in six.iteritems(vars(self)))
 
 
+@deprecated('2.1')
 def unique(x):
     """Return a list of unique elements of *x*"""
     return list(set(x))
@@ -851,6 +880,7 @@ def flatten(seq, scalarp=is_scalar_or_string):
                 yield subitem
 
 
+@deprecated('2.1', "sorted(..., key=itemgetter(...))")
 class Sorter(object):
     """
     Sort by attribute or item
@@ -883,8 +913,7 @@ class Sorter(object):
                 data.sort()
                 result = data
             else:
-                result = data[:]
-                result.sort()
+                result = sorted(data)
             return result
         else:
             aux = [(data[i][itemindex], i) for i in range(len(data))]
@@ -899,6 +928,7 @@ class Sorter(object):
     __call__ = byItem
 
 
+@deprecated('2.1')
 class Xlator(dict):
     """
     All-in-one multiple-string-substitution class
@@ -920,7 +950,7 @@ class Xlator(dict):
 
     def _make_regex(self):
         """ Build re object based on the keys of the current dictionary """
-        return re.compile("|".join(map(re.escape, list(six.iterkeys(self)))))
+        return re.compile("|".join(map(re.escape, self)))
 
     def __call__(self, match):
         """ Handler invoked for each regex *match* """
@@ -931,6 +961,7 @@ class Xlator(dict):
         return self._make_regex().sub(self, text)
 
 
+@deprecated('2.1')
 def soundex(name, len=4):
     """ soundex module conforming to Odell-Russell algorithm """
 
@@ -959,6 +990,7 @@ def soundex(name, len=4):
     return (sndx + (len * '0'))[:len]
 
 
+@deprecated('2.1')
 class Null(object):
     """ Null objects always and reliably "do nothing." """
 
@@ -1028,6 +1060,7 @@ class GetRealpathAndStat(object):
 get_realpath_and_stat = GetRealpathAndStat()
 
 
+@deprecated('2.1')
 def dict_delall(d, keys):
     """delete all of the *keys* from the :class:`dict` *d*"""
     for key in keys:
@@ -1037,6 +1070,7 @@ def dict_delall(d, keys):
             pass
 
 
+@deprecated('2.1')
 class RingBuffer(object):
     """ class that implements a not-yet-full buffer """
     def __init__(self, size_max):
@@ -1088,6 +1122,7 @@ def get_split_ind(seq, N):
     return len(seq)
 
 
+@deprecated('2.1', alternative='textwrap.TextWrapper')
 def wrap(prefix, text, cols):
     """wrap *text* with *prefix* at length *cols*"""
     pad = ' ' * len(prefix.expandtabs())
@@ -1202,6 +1237,7 @@ def get_recursive_filelist(args):
     return [f for f in files if not os.path.islink(f)]
 
 
+@deprecated('2.1')
 def pieces(seq, num=2):
     """Break up the *seq* into *num* tuples"""
     start = 0
@@ -1213,6 +1249,7 @@ def pieces(seq, num=2):
         start += num
 
 
+@deprecated('2.1')
 def exception_to_str(s=None):
     if six.PY3:
         sh = io.StringIO()
@@ -1224,6 +1261,7 @@ def exception_to_str(s=None):
     return sh.getvalue()
 
 
+@deprecated('2.1')
 def allequal(seq):
     """
     Return *True* if all elements of *seq* compare equal.  If *seq* is
@@ -1239,6 +1277,7 @@ def allequal(seq):
     return True
 
 
+@deprecated('2.1')
 def alltrue(seq):
     """
     Return *True* if all elements of *seq* evaluate to *True*.  If
@@ -1252,6 +1291,7 @@ def alltrue(seq):
     return True
 
 
+@deprecated('2.1')
 def onetrue(seq):
     """
     Return *True* if one element of *seq* is *True*.  It *seq* is
@@ -1265,6 +1305,7 @@ def onetrue(seq):
     return False
 
 
+@deprecated('2.1')
 def allpairs(x):
     """
     return all possible pairs in sequence *x*
@@ -1391,6 +1432,7 @@ class Stack(object):
                 self.push(thiso)
 
 
+@deprecated('2.1')
 def finddir(o, match, case=False):
     """
     return all attributes of *o* which match string in match.  if case
@@ -1405,6 +1447,7 @@ def finddir(o, match, case=False):
     return [orig for name, orig in names if name.find(match) >= 0]
 
 
+@deprecated('2.1')
 def reverse_dict(d):
     """reverse the dictionary -- may lose data if values are not unique!"""
     return {v: k for k, v in six.iteritems(d)}
@@ -1476,6 +1519,7 @@ def safezip(*args):
     return list(zip(*args))
 
 
+@deprecated('2.1')
 def issubclass_safe(x, klass):
     """return issubclass(x, klass) and return False on a TypeError"""
 
@@ -1720,6 +1764,7 @@ def simple_linear_interpolation(a, steps):
     return result
 
 
+@deprecated('2.1', alternative='shutil.rmtree')
 def recursive_remove(path):
     if os.path.isdir(path):
         for fname in (glob.glob(os.path.join(path, '*')) +
@@ -2018,6 +2063,7 @@ def boxplot_stats(X, whis=1.5, bootstrap=None, labels=None,
 
 
 # FIXME I don't think this is used anywhere
+@deprecated('2.1')
 def unmasked_index_ranges(mask, compressed=True):
     """
     Find index ranges where *mask* is *False*.
@@ -2071,7 +2117,7 @@ def unmasked_index_ranges(mask, compressed=True):
 # The ls_mapper maps short codes for line style to their full name used by
 # backends; the reverse mapper is for mapping full names to short ones.
 ls_mapper = {'-': 'solid', '--': 'dashed', '-.': 'dashdot', ':': 'dotted'}
-ls_mapper_r = reverse_dict(ls_mapper)
+ls_mapper_r = {v: k for k, v in six.iteritems(ls_mapper)}
 
 
 def align_iterators(func, *iterables):
@@ -2637,3 +2683,259 @@ class Locked(object):
                     os.rmdir(path)
                 except OSError:
                     pass
+
+
+class _FuncInfo(object):
+    """
+    Class used to store a function.
+
+    """
+
+    def __init__(self, function, inverse, bounded_0_1=True, check_params=None):
+        """
+        Parameters
+        ----------
+
+        function : callable
+            A callable implementing the function receiving the variable as
+            first argument and any additional parameters in a list as second
+            argument.
+        inverse : callable
+            A callable implementing the inverse function receiving the variable
+            as first argument and any additional parameters in a list as
+            second argument. It must satisfy 'inverse(function(x, p), p) == x'.
+        bounded_0_1: bool or callable
+            A boolean indicating whether the function is bounded in the [0,1]
+            interval, or a callable taking a list of values for the additional
+            parameters, and returning a boolean indicating whether the function
+            is bounded in the [0,1] interval for that combination of
+            parameters. Default True.
+        check_params: callable or None
+            A callable taking a list of values for the additional parameters
+            and returning a boolean indicating whether that combination of
+            parameters is valid. It is only required if the function has
+            additional parameters and some of them are restricted.
+            Default None.
+
+        """
+
+        self.function = function
+        self.inverse = inverse
+
+        if callable(bounded_0_1):
+            self._bounded_0_1 = bounded_0_1
+        else:
+            self._bounded_0_1 = lambda x: bounded_0_1
+
+        if check_params is None:
+            self._check_params = lambda x: True
+        elif callable(check_params):
+            self._check_params = check_params
+        else:
+            raise ValueError("Invalid 'check_params' argument.")
+
+    def is_bounded_0_1(self, params=None):
+        """
+        Returns a boolean indicating if the function is bounded in the [0,1]
+        interval for a particular set of additional parameters.
+
+        Parameters
+        ----------
+
+        params : list
+            The list of additional parameters. Default None.
+
+        Returns
+        -------
+
+        out : bool
+            True if the function is bounded in the [0,1] interval for
+            parameters 'params'. Otherwise False.
+
+        """
+
+        return self._bounded_0_1(params)
+
+    def check_params(self, params=None):
+        """
+        Returns a boolean indicating if the set of additional parameters is
+        valid.
+
+        Parameters
+        ----------
+
+        params : list
+            The list of additional parameters. Default None.
+
+        Returns
+        -------
+
+        out : bool
+            True if 'params' is a valid set of additional parameters for the
+            function. Otherwise False.
+
+        """
+
+        return self._check_params(params)
+
+
+class _StringFuncParser(object):
+    """
+    A class used to convert predefined strings into
+    _FuncInfo objects, or to directly obtain _FuncInfo
+    properties.
+
+    """
+
+    _funcs = {}
+    _funcs['linear'] = _FuncInfo(lambda x: x,
+                                 lambda x: x,
+                                 True)
+    _funcs['quadratic'] = _FuncInfo(np.square,
+                                    np.sqrt,
+                                    True)
+    _funcs['cubic'] = _FuncInfo(lambda x: x**3,
+                                lambda x: x**(1. / 3),
+                                True)
+    _funcs['sqrt'] = _FuncInfo(np.sqrt,
+                               np.square,
+                               True)
+    _funcs['cbrt'] = _FuncInfo(lambda x: x**(1. / 3),
+                               lambda x: x**3,
+                               True)
+    _funcs['log10'] = _FuncInfo(np.log10,
+                                lambda x: (10**(x)),
+                                False)
+    _funcs['log'] = _FuncInfo(np.log,
+                              np.exp,
+                              False)
+    _funcs['log2'] = _FuncInfo(np.log2,
+                               lambda x: (2**x),
+                               False)
+    _funcs['x**{p}'] = _FuncInfo(lambda x, p: x**p[0],
+                                 lambda x, p: x**(1. / p[0]),
+                                 True)
+    _funcs['root{p}(x)'] = _FuncInfo(lambda x, p: x**(1. / p[0]),
+                                     lambda x, p: x**p,
+                                     True)
+    _funcs['log{p}(x)'] = _FuncInfo(lambda x, p: (np.log(x) /
+                                                  np.log(p[0])),
+                                    lambda x, p: p[0]**(x),
+                                    False,
+                                    lambda p: p[0] > 0)
+    _funcs['log10(x+{p})'] = _FuncInfo(lambda x, p: np.log10(x + p[0]),
+                                       lambda x, p: 10**x - p[0],
+                                       lambda p: p[0] > 0)
+    _funcs['log(x+{p})'] = _FuncInfo(lambda x, p: np.log(x + p[0]),
+                                     lambda x, p: np.exp(x) - p[0],
+                                     lambda p: p[0] > 0)
+    _funcs['log{p}(x+{p})'] = _FuncInfo(lambda x, p: (np.log(x + p[1]) /
+                                                      np.log(p[0])),
+                                        lambda x, p: p[0]**(x) - p[1],
+                                        lambda p: p[1] > 0,
+                                        lambda p: p[0] > 0)
+
+    def __init__(self, str_func):
+        """
+        Parameters
+        ----------
+        str_func : string
+            String to be parsed.
+
+        """
+
+        if not isinstance(str_func, six.string_types):
+            raise ValueError("'%s' must be a string." % str_func)
+        self._str_func = six.text_type(str_func)
+        self._key, self._params = self._get_key_params()
+        self._func = self._parse_func()
+
+    def _parse_func(self):
+        """
+        Parses the parameters to build a new _FuncInfo object,
+        replacing the relevant parameters if necessary in the lambda
+        functions.
+
+        """
+
+        func = self._funcs[self._key]
+
+        if not self._params:
+            func = _FuncInfo(func.function, func.inverse,
+                             func.is_bounded_0_1())
+        else:
+            m = func.function
+            function = (lambda x, m=m: m(x, self._params))
+
+            m = func.inverse
+            inverse = (lambda x, m=m: m(x, self._params))
+
+            is_bounded_0_1 = func.is_bounded_0_1(self._params)
+
+            func = _FuncInfo(function, inverse,
+                             is_bounded_0_1)
+        return func
+
+    @property
+    def func_info(self):
+        """
+        Returns the _FuncInfo object.
+
+        """
+        return self._func
+
+    @property
+    def function(self):
+        """
+        Returns the callable for the direct function.
+
+        """
+        return self._func.function
+
+    @property
+    def inverse(self):
+        """
+        Returns the callable for the inverse function.
+
+        """
+        return self._func.inverse
+
+    @property
+    def is_bounded_0_1(self):
+        """
+        Returns a boolean indicating if the function is bounded
+        in the [0-1 interval].
+
+        """
+        return self._func.is_bounded_0_1()
+
+    def _get_key_params(self):
+        str_func = self._str_func
+        # Checking if it comes with parameters
+        regex = '\{(.*?)\}'
+        params = re.findall(regex, str_func)
+
+        for i, param in enumerate(params):
+            try:
+                params[i] = float(param)
+            except ValueError:
+                raise ValueError("Parameter %i is '%s', which is "
+                                 "not a number." %
+                                 (i, param))
+
+        str_func = re.sub(regex, '{p}', str_func)
+
+        try:
+            func = self._funcs[str_func]
+        except (ValueError, KeyError):
+            raise ValueError("'%s' is an invalid string. The only strings "
+                             "recognized as functions are %s." %
+                             (str_func, list(self._funcs)))
+
+        # Checking that the parameters are valid
+        if not func.check_params(params):
+            raise ValueError("%s are invalid values for the parameters "
+                             "in %s." %
+                             (params, str_func))
+
+        return str_func, params

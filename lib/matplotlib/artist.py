@@ -437,7 +437,7 @@ class Artist(object):
         # Pick self
         if self.pickable():
             picker = self.get_picker()
-            if picker is not None:
+            if callable(picker):
                 inside, prop = picker(self, mouseevent)
             else:
                 inside, prop = self.contains(mouseevent)
@@ -1006,7 +1006,7 @@ class Artist(object):
         if match is None:  # always return True
             def matchfunc(x):
                 return True
-        elif cbook.issubclass_safe(match, Artist):
+        elif isinstance(match, type) and issubclass(match, Artist):
             def matchfunc(x):
                 return isinstance(x, match)
         elif callable(match):
@@ -1317,12 +1317,8 @@ class ArtistInspector(object):
         Return the getters and actual values as list of strings.
         """
 
-        d = self.properties()
-        names = list(six.iterkeys(d))
-        names.sort()
         lines = []
-        for name in names:
-            val = d[name]
+        for name, val in sorted(six.iteritems(self.properties())):
             if getattr(val, 'shape', ()) != () and len(val) > 6:
                 s = str(val[:6]) + '...'
             else:

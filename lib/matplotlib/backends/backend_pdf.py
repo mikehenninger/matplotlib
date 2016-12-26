@@ -17,6 +17,7 @@ import sys
 import time
 import warnings
 import zlib
+import collections
 from io import BytesIO
 from functools import total_ordering
 
@@ -24,7 +25,7 @@ import numpy as np
 from six import unichr
 
 
-from datetime import datetime
+from datetime import datetime, tzinfo, timedelta
 from math import ceil, cos, floor, pi, sin
 
 import matplotlib
@@ -45,6 +46,7 @@ from matplotlib.ft2font import (FIXED_WIDTH, ITALIC, LOAD_NO_SCALE,
 from matplotlib.mathtext import MathTextParser
 from matplotlib.transforms import Affine2D, BboxBase
 from matplotlib.path import Path
+from matplotlib.dates import UTC
 from matplotlib import _path
 from matplotlib import _png
 from matplotlib import ttconv
@@ -202,10 +204,14 @@ def pdfRepr(obj):
     # A date.
     elif isinstance(obj, datetime):
         r = obj.strftime('D:%Y%m%d%H%M%S')
-        if time.daylight:
-            z = time.altzone
+        z = obj.utcoffset()
+        if z is not None:
+            z = z.seconds
         else:
-            z = time.timezone
+            if time.daylight:
+                z = time.altzone
+            else:
+                z = time.timezone
         if z == 0:
             r += 'Z'
         elif z < 0:
@@ -422,7 +428,7 @@ class Stream(object):
 class PdfFile(object):
     """PDF file object."""
 
-    def __init__(self, filename):
+    def __init__(self, filename, metadata=None):
         self.nextObject = 1     # next free object id
         self.xrefTable = [[0, 65535, 'the zero object']]
         self.passed_in_file_object = False
@@ -467,11 +473,22 @@ class PdfFile(object):
         self.writeObject(self.rootObject, root)
 
         revision = ''
+        # get source date from SOURCE_DATE_EPOCH, if set
+        # See https://reproducible-builds.org/specs/source-date-epoch/
+        source_date_epoch = os.getenv("SOURCE_DATE_EPOCH")
+        if source_date_epoch:
+            source_date = datetime.utcfromtimestamp(int(source_date_epoch))
+            source_date = source_date.replace(tzinfo=UTC)
+        else:
+            source_date = datetime.today()
+
         self.infoDict = {
             'Creator': 'matplotlib %s, http://matplotlib.org' % __version__,
             'Producer': 'matplotlib pdf backend%s' % revision,
-            'CreationDate': datetime.today()
-            }
+            'CreationDate': source_date
+        }
+        if metadata is not None:
+            self.infoDict.update(metadata)
 
         self.fontNames = {}     # maps filenames to internal font names
         self.nextFont = 1       # next free internal font name
@@ -482,14 +499,15 @@ class PdfFile(object):
 
         self.alphaStates = {}   # maps alpha values to graphics state objects
         self.nextAlphaState = 1
-        self.hatchPatterns = {}
+        # reproducible writeHatches needs an ordered dict:
+        self.hatchPatterns = collections.OrderedDict()
         self.nextHatch = 1
         self.gouraudTriangles = []
 
-        self._images = {}
+        self._images = collections.OrderedDict()   # reproducible writeImages
         self.nextImage = 1
 
-        self.markers = {}
+        self.markers = collections.OrderedDict()   # reproducible writeMarkers
         self.multi_byte_charprocs = {}
 
         self.paths = []
@@ -551,9 +569,10 @@ class PdfFile(object):
         self.writeObject(annotObject, theNote)
         self.pageAnnotations.append(annotObject)
 
-    def close(self):
+    def finalize(self):
+        "Write out the various deferred objects and the pdf end matter."
+
         self.endStream()
-        # Write out the various deferred objects
         self.writeFonts()
         self.writeObject(
             self.alphaStateObject,
@@ -582,12 +601,16 @@ class PdfFile(object):
         # Finalize the file
         self.writeXref()
         self.writeTrailer()
+
+    def close(self):
+        "Flush all buffers and free all resources."
+
+        self.endStream()
         if self.passed_in_file_object:
             self.fh.flush()
-        elif self.original_file_like is not None:
-            self.original_file_like.write(self.fh.getvalue())
-            self.fh.close()
         else:
+            if self.original_file_like is not None:
+                self.original_file_like.write(self.fh.getvalue())
             self.fh.close()
 
     def write(self, data):
@@ -640,7 +663,8 @@ class PdfFile(object):
 
     def writeFonts(self):
         fonts = {}
-        for filename, Fx in six.iteritems(self.fontNames):
+        for filename in sorted(self.fontNames):
+            Fx = self.fontNames[filename]
             matplotlib.verbose.report('Embedding font %s' % filename, 'debug')
             if filename.endswith('.afm'):
                 # from pdf.use14corefonts
@@ -920,7 +944,8 @@ end"""
             rawcharprocs = ttconv.get_pdf_charprocs(
                 filename.encode(sys.getfilesystemencoding()), glyph_ids)
             charprocs = {}
-            for charname, stream in six.iteritems(rawcharprocs):
+            for charname in sorted(rawcharprocs):
+                stream = rawcharprocs[charname]
                 charprocDict = {'Length': len(stream)}
                 # The 2-byte characters are used as XObjects, so they
                 # need extra info in their dictionary
@@ -1008,7 +1033,7 @@ end"""
 
             # Make the 'W' (Widths) array, CidToGidMap and ToUnicode CMap
             # at the same time
-            cid_to_gid_map = ['\u0000'] * 65536
+            cid_to_gid_map = ['\0'] * 65536
             widths = []
             max_ccode = 0
             for c in characters:
@@ -1510,7 +1535,7 @@ end"""
                     'CreationDate': is_date,
                     'ModDate': is_date,
                     'Trapped': check_trapped}
-        for k in six.iterkeys(self.infoDict):
+        for k in self.infoDict:
             if k not in keywords:
                 warnings.warn('Unknown infodict keyword: %s' % k)
             else:
@@ -1871,6 +1896,12 @@ class RendererPdf(RendererBase):
                 pdfname = self.file.fontName(dvifont.texname)
                 if dvifont.texname not in self.file.dviFontInfo:
                     psfont = self.tex_font_mapping(dvifont.texname)
+                    if psfont.filename is None:
+                        self.file.broken = True
+                        raise ValueError(
+                            ("No usable font file found for %s (%s). "
+                             "The font may lack a Type-1 version.")
+                            % (psfont.psname, dvifont.texname))
                     self.file.dviFontInfo[dvifont.texname] = Bunch(
                         fontfile=psfont.filename,
                         basefont=psfont.psname,
@@ -2409,22 +2440,27 @@ class PdfPages(object):
     """
     __slots__ = ('_file', 'keep_empty')
 
-    def __init__(self, filename, keep_empty=True):
+    def __init__(self, filename, keep_empty=True, metadata=None):
         """
         Create a new PdfPages object.
 
         Parameters
         ----------
 
-        filename: str
+        filename : str
             Plots using :meth:`PdfPages.savefig` will be written to a file at
             this location. The file is opened at once and any older file with
             the same name is overwritten.
-        keep_empty: bool, optional
+        keep_empty : bool, optional
             If set to False, then empty pdf files will be deleted automatically
             when closed.
+        metadata : dictionary, optional
+            Information dictionary object (see PDF reference section 10.2.1
+            'Document Information Dictionary'), e.g.:
+            `{'Creator': 'My software', 'Author': 'Me',
+            'Title': 'Awesome fig'}`
         """
-        self._file = PdfFile(filename)
+        self._file = PdfFile(filename, metadata=metadata)
         self.keep_empty = keep_empty
 
     def __enter__(self):
@@ -2438,6 +2474,7 @@ class PdfPages(object):
         Finalize this object, making the underlying file a complete
         PDF file.
         """
+        self._file.finalize()
         self._file.close()
         if (self.get_pagecount() == 0 and not self.keep_empty and
                 not self._file.passed_in_file_object):
@@ -2462,7 +2499,7 @@ class PdfPages(object):
         Parameters
         ----------
 
-        figure: :class:`~matplotlib.figure.Figure` or int, optional
+        figure : :class:`~matplotlib.figure.Figure` or int, optional
             Specifies what figure is saved to file. If not specified, the
             active figure is saved. If a :class:`~matplotlib.figure.Figure`
             instance is provided, this figure is saved. If an int is specified,
@@ -2526,7 +2563,7 @@ class FigureCanvasPdf(FigureCanvasBase):
         if isinstance(filename, PdfPages):
             file = filename._file
         else:
-            file = PdfFile(filename)
+            file = PdfFile(filename, metadata=kwargs.pop("metadata", None))
         try:
             file.newPage(width, height)
             _bbox_inches_restore = kwargs.pop("bbox_inches_restore", None)
@@ -2536,6 +2573,7 @@ class FigureCanvasPdf(FigureCanvasBase):
                 bbox_inches_restore=_bbox_inches_restore)
             self.figure.draw(renderer)
             renderer.finalize()
+            file.finalize()
         finally:
             if isinstance(filename, PdfPages):  # finish off this page
                 file.endStream()

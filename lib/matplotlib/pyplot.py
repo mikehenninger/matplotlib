@@ -591,9 +591,7 @@ def fignum_exists(num):
 
 def get_fignums():
     """Return a list of existing figure numbers."""
-    fignums = list(six.iterkeys(_pylab_helpers.Gcf.figs))
-    fignums.sort()
-    return fignums
+    return sorted(_pylab_helpers.Gcf.figs)
 
 
 def get_figlabels():
@@ -775,9 +773,10 @@ def figlegend(handles, labels, loc, **kwargs):
 
 ## Figure and Axes hybrid ##
 
-_hold_msg = """Future behavior will be consistent with the long-time
-    default: plot commands add elements without first
-    clearing the Axes and/or Figure."""
+_hold_msg = """pyplot.hold is deprecated.
+    Future behavior will be consistent with the long-time default:
+    plot commands add elements without first clearing the
+    Axes and/or Figure."""
 
 @deprecated("2.0", message=_hold_msg)
 def hold(b=None):
@@ -1810,9 +1809,8 @@ def get_plot_commands():
         if inspect.isfunction(obj) and inspect.getmodule(obj) is this_module:
             commands.add(name)
 
-    commands = list(commands)
-    commands.sort()
-    return commands
+    return sorted(commands)
+
 
 def colors():
     """
@@ -2098,7 +2096,7 @@ def colormaps():
 
 
     """
-    return sorted(cm.cmap_d.keys())
+    return sorted(cm.cmap_d)
 
 
 def _setup_pyplot_info_docstrings():
@@ -2279,6 +2277,11 @@ def polar(*args, **kwargs):
     strings, as in :func:`~matplotlib.pyplot.plot`.
 
     """
+    # If an axis already exists, check if it has a polar projection
+    if gcf().get_axes():
+        if not isinstance(gca(), PolarAxes):
+            warnings.warn('Trying to create polar plot on an axis that does '
+                          'not have a polar projection.')
     ax = gca(polar=True)
     ret = ax.plot(*args, **kwargs)
     return ret

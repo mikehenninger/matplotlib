@@ -32,7 +32,7 @@ def test_MaxNLocator_integer():
     test_value = np.array([-1, 0, 1, 2])
     assert_almost_equal(loc.tick_values(-0.1, 1.1), test_value)
 
-    test_value = np.array([-0.25, 0, 0.25, 0.5, 0.75, 1])
+    test_value = np.array([-0.3, 0, 0.3, 0.6, 0.9, 1.2])
     assert_almost_equal(loc.tick_values(-0.1, 0.95), test_value)
 
 
@@ -236,7 +236,7 @@ def _sub_labels(axis, subs=()):
     assert label_test == label_expected
 
 
-@cleanup
+@cleanup(style='default')
 def test_LogFormatter_sublabel():
     # test label locator
     fig, ax = plt.subplots()
@@ -338,7 +338,7 @@ def test_LogFormatterSciNotation():
         )
     }
 
-    for base in test_cases.keys():
+    for base in test_cases:
         formatter = mticker.LogFormatterSciNotation(base=base)
         formatter.sublabel = {1, 2, 5, 1.2}
         for value, expected in test_cases[base]:
